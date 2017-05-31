@@ -883,3 +883,60 @@ NumericVector new_h22(NumericMatrix x, NumericVector t, NumericVector theta,
   Free(ex); Free(iwork); Free(work);
   return(value);
 }
+
+
+/************************************************************************************
+ ************* negative log likelihood function via forward algorithm ***************
+ ************************************************************************************/
+
+// [[Rcpp::export]]
+double nllk_fwd_ths(NumericVector &theta, NumericMatrix &data,
+	       NumericVector &integrControl) {
+  // theta lambda0, lambda1, lambda2, sigma, p
+  // data diff of t and x
+  int n = data.nrow(); int dim = data.ncol() - 1;
+  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+  double ps0 = 1. / lambda0 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps1 = 1. / lambda1 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps2 = 1. / lambda2 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  NumericVector tt = data.column(0);
+  NumericMatrix x = data(Range(0, n - 1), Range(1, dim));
+  NumericVector
+    hresult00 = new_h00(x, tt, theta, integrControl),
+    hresult01 = new_h01(x, tt, theta, integrControl),
+    hresult02 = new_h02(x, tt, theta, integrControl),
+    hresult10 = new_h10(x, tt, theta, integrControl),
+    hresult11 = new_h11(x, tt, theta, integrControl),
+    hresult12 = new_h12(x, tt, theta, integrControl),
+    hresult20 = new_h20(x, tt, theta, integrControl),
+    hresult21 = new_h21(x, tt, theta, integrControl),
+    hresult22 = new_h22(x, tt, theta, integrControl);
+  double alpha0 = ps0, alpha1 = ps1, alpha2 = ps2;
+
+  // do forward algorithm
+  double llk = 0.;
+  for (int i = 0; i < n; i++) {
+    NumericVector crow = x.row(i);
+    if (is_true(all(crow == 0.))) {
+      hresult00[i] = 0.;
+      hresult01[i] = 0.;
+      hresult02[i] = 0.;
+      hresult10[i] = 0.;
+      hresult11[i] = exp(-lambda1 * tt[i]);
+      hresult12[i] = 0.;
+      hresult20[i] = 0.;
+      hresult21[i] = 0.;
+      hresult22[i] = exp(-lambda2 * tt[i]);
+    }
+    double sumf0 = alpha0 * hresult00[i] + alpha1 * hresult10[i] + alpha2 * hresult20[i];
+    double sumf1 = alpha0 * hresult01[i] + alpha1 * hresult11[i] + alpha2 * hresult21[i];
+    double sumf2 = alpha0 * hresult02[i] + alpha1 * hresult12[i] + alpha2 * hresult22[i];
+
+    double dx = sumf0 + sumf1 + sumf2;
+    alpha0 = sumf0 / dx;
+    alpha1 = sumf1 / dx;
+    alpha2 = sumf2 / dx;
+    llk += log(dx);
+  }
+  return(-llk);
+}
