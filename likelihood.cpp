@@ -36,7 +36,7 @@ double new_p00(double s, double t,
     cart = R::pgamma(s, n, 1/lambda0, 1, 0) - R::pgamma(s, n + 1, 1/lambda0, 1, 0);
     cart *= sumT_p00(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart == 0) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
@@ -89,7 +89,7 @@ double new_p01(double s, double t,
   while (TRUE) {
     cart = p * R::dgamma(s, n + 1, 1/lambda0, 0) * sumT_p01(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart == 0) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
@@ -164,7 +164,7 @@ double new_p10(double s, double t,
     cart = R::pgamma(s, n, 1/lambda0, 1, 0) - R::pgamma(s, n + 1, 1/lambda0, 1, 0);
     cart *= sumT_p10(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart == 0) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
@@ -216,7 +216,7 @@ double new_p11(double s, double t,
   while (TRUE) {
     cart = p * R::dgamma(s, n, 1/lambda0, 0) * sumT_p11(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart == 0) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
@@ -268,7 +268,7 @@ double new_p12(double s, double t,
   while (TRUE) {
     cart = (1 - p) * R::dgamma(s, n, 1/lambda0, 0) * sumT_p12(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart == 0) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
