@@ -16,13 +16,10 @@ double sumT_p00(double s, double t,
   NumericVector dco_x = NumericVector::create(t - s);
   NumericVector rate  = NumericVector::create(lambda1, lambda2);
   NumericVector shape(2);
-  double pk = 1.;
   for (int k = 0; k < n + 1; ++k) {
     shape[0] = k;
     shape[1] = n - k;
-    result += coga::dcoga(dco_x, shape, rate)[0] * R::choose(n, k) * pk * pow(1 - p, n - k);
-    pk *= p;
-
+    result += coga::dcoga(dco_x, shape, rate)[0] * R::choose(n, k) * pow(p, k) * pow(1 - p, n - k);
   }
   return result;
 }
@@ -35,10 +32,10 @@ double new_p00(double s, double t,
   double cart = 0;
 
   while (TRUE) {
-    cart = R::pgamma(s, n, 1/lambda0, 1., 0.) - R::pgamma(s, n + 1., 1./lambda0, 1., 0.);
+    cart = R::pgamma(s, n, 1/lambda0, 1, 0) - R::pgamma(s, n + 1, 1/lambda0, 1, 0);
     cart *= sumT_p00(s, t, lambda1, lambda2, p, n);
     result += cart;
-    if (cart / (.0001 + result) == 0.) break;
+    if (cart == 0 && n > 50) break;
     n++;
   }
 
