@@ -9,7 +9,6 @@ using namespace Rcpp;
  **************************************************************************/
 
 /****************************** calculate p00 *****************************/
-
 double sumT_p00(double s, double t,
 	    double lambda1, double lambda2,
 	    double p, int n) {
