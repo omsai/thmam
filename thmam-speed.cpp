@@ -1,4 +1,5 @@
 #include <Rcpp.h>
+#include <coga.h>
 
 using namespace Rcpp;
 
@@ -130,14 +131,31 @@ NumericVector new_vp00(NumericVector vs, double t,
 }
 
 /****************************** calculate p01 *****************************/
-double sumT_p01(double s, double t,
-		double lambda1, double lambda2,
-		double p, int n) {
-  double result = 0;
+// n starts from 1
+NumericVector get_F2(double s, double t,
+		     double lambda1, double lambda2,
+		     int n) {
+  NumericVector result(n + 1);
   double pco_x = t - s;
-  double cart = 0;
   for (int k = 0; k < n + 1; ++k) {
-    cart = pcoga2dim(pco_x, k, n - k, lambda1, lambda2) - pcoga2dim(pco_x, k + 1, n - k, lambda1, lambda2);
+    result[k] = pcoga2dim(pco_x, k + 1, n - k, lambda1, lambda2);
+  }
+  return result;
+}
+// n starts from 2
+NumericVector get_F1(double s, double t, double lambda2,
+		     int n, NumericVector F2) {
+  double firstF1 = R::pgamma(t - s, n, 1 / lambda2, 1, 0);
+  F2.insert(0, firstF1);
+  return F2;
+}
+
+double sumT_p01(double p, NumericVector F1, NumericVector F2) {
+  double result = 0;
+  double cart = 0;
+  int n = F1.size() - 1;
+  for (int k = 0; k < n + 1; ++k) {
+    cart = F1[k] - F2[k];
     cart *= R::choose(n, k) * pow(p, k) * pow(1 - p, n - k);
     result += cart;
   }
@@ -150,12 +168,18 @@ double new_p01(double s, double t,
   int n = 1;
   double result = 0;
   double cart = 0;
+  NumericVector F1(2);
+  F1[0] = R::pgamma(t - s, 1, 1 / lambda2, 1, 0);
+  F1[1] = R::pgamma(t - s, 1, 1 / lambda1, 1, 0);
+  NumericVector F2 = get_F2(s, t, lambda1, lambda2, 1);
 
   while (TRUE) {
-    cart = p * R::dgamma(s, n + 1, 1/lambda0, 0) * sumT_p01(s, t, lambda1, lambda2, p, n);
+    cart = p * R::dgamma(s, n + 1, 1/lambda0, 0) * sumT_p01(p, F1, F2);
     result += cart;
     if (cart == 0 && n > 50) break;
     n++;
+    F1 = get_F1(s, t, lambda2, n, F2);
+    F2 = get_F2(s, t, lambda1, lambda2, n);
   }
 
   result += p * R::dgamma(s, 1, 1/lambda0, 0) * (1 - pcoga2dim(t - s, 1, 0, lambda1, lambda2));
@@ -173,5 +197,4 @@ NumericVector new_vp01(NumericVector vs, double t,
   }
   return result;
 }
-
 
