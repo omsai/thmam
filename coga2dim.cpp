@@ -1,4 +1,8 @@
+// [[Rcpp::depends(RcppGSL)]]
+
 #include <Rcpp.h>
+#include <RcppGSL.h>
+#include <gsl/gsl_sf_hyperg.h>
 
 using namespace Rcpp;
 
@@ -82,3 +86,30 @@ double pcoga2dim(double x, double shape1, double shape2,
   return result * pow(beta1/beta2, shape2);
 }
 
+// [[Rcpp::export]]
+double dcoga2dim_hyper(double x, double shape1, double shape2,
+		       double rate1, double rate2) {
+  // transfer rate to scale
+  double beta1 = 1 / rate1;
+  double beta2 = 1 / rate2;
+  // handle one shape is 0
+  if (shape1 == 0) return R::dgamma(x, shape2, beta2, 0);
+  if (shape2 == 0) return R::dgamma(x, shape1, beta1, 0);
+  // determine min beta
+  if (beta1 > beta2) {
+    double beta_cart = beta1;
+    beta1 = beta2;
+    beta2 = beta_cart;
+    double shape_cart = shape1;
+    shape1 = shape2;
+    shape2 = shape_cart;
+  }
+
+  double lgam = shape1 + shape2;
+  double parx = (1/beta1 - 1/beta2) * x;
+  double result = pow(x, lgam - 1) * exp(-x / beta1);
+  result /= pow(beta1, shape1) * pow(beta2, shape2) * exp(R::lgammafn(lgam));
+  result *= gsl_sf_hyperg_1F1(shape2, lgam, parx);
+
+  return result;
+}
