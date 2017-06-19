@@ -195,7 +195,7 @@ double pcoga2dim_recur(double x, double shape1, double shape2,
 
   while (TRUE) {
     if (cart == R_PosInf || R_IsNaN(cart)) {
-      warning("Inf or NaN happened, not converge!");
+      //warning("Inf or NaN happened, not converge!");
       break;
     }
     result += cart;
@@ -219,4 +219,50 @@ NumericVector pcoga2dim_recur_v(NumericVector x,
     result[i] = pcoga2dim_recur(x[i], shape1, shape2, rate1, rate2);
   }
   return result;
+}
+
+// This is the best version until now
+// [[Rcpp::export]]
+double pcoga2dim_recur_nopgamma(double x, double shape1, double shape2,
+		 double rate1, double rate2) {
+  // transfer rate to scale
+  double beta1 = 1 / rate1;
+  double beta2 = 1 / rate2;
+  // handle one shape is 0
+  if (shape1 == 0) return R::pgamma(x, shape2, beta2, 1, 0);
+  if (shape2 == 0) return R::pgamma(x, shape1, beta1, 1, 0);
+  // make convergence faster
+
+  // determine min beta
+  if (beta1 > beta2) {
+    double beta_cart = beta1;
+    beta1 = beta2;
+    beta2 = beta_cart;
+    double shape_cart = shape1;
+    shape1 = shape2;
+    shape2 = shape_cart;
+  }
+
+  double lgam = shape1 + shape2;
+  double sun = 1 - beta1 / beta2;
+  
+  double cartB = 1.;
+  double cartD = R::pgamma(x/beta1, lgam, 1, 1, 0);
+  double cart = cartD;
+  double result = 0.;
+  int r = 0;
+
+  while (TRUE) {
+    if (cart == R_PosInf || R_IsNaN(cart)) {
+      warning("Inf or NaN happened, not converge!");
+      break;
+    }
+    result += cart;
+    if (cart == 0) break;
+    cartB *= sun * (shape2 + r) / (r + 1);
+    r++;
+    cartD = R::pgamma(x/beta1, lgam + r, 1, 1, 0);
+    cart = cartB * cartD;
+  }
+  return result * pow(beta1/beta2, shape2);
 }
