@@ -87,9 +87,7 @@ double pcoga2dim(double x, double shape1, double shape2,
   return result * pow(beta1/beta2, shape2);
 }
 
-// a little bit quicker than dcoga2dim_recur
-// but less accurate than dcoga2dim_recur during
-// large parameter of alpha
+// best choose
 // [[Rcpp::export]]
 double dcoga2dim_hyper(double x, double shape1, double shape2,
 		       double rate1, double rate2) {
@@ -113,13 +111,12 @@ double dcoga2dim_hyper(double x, double shape1, double shape2,
   double parx = (1/beta1 - 1/beta2) * x;
   double result = pow(x, lgam - 1) * exp(-x / beta1);
   result *= gsl_sf_hyperg_1F1(shape2, lgam, parx);
-  result /= pow(beta1, shape1) * pow(beta2, shape2) * exp(R::lgammafn(lgam));
+  result /= pow(beta1, shape1) * pow(beta2, shape2);
+  result /= exp(R::lgammafn(lgam));
   return result;
 }
 
 
-
-// recurrency version is the best choice until now
 // [[Rcpp::export]]
 double dcoga2dim_recur(double x, double shape1, double shape2,
 		 double rate1, double rate2) {
@@ -189,6 +186,7 @@ double pcoga2dim_recur(double x, double shape1, double shape2,
   
   double cartB = 1.;
   double cartD = R::pgamma(x/beta1, lgam, 1, 1, 0);
+  double cartE = 1 / exp(R::lgammafn(lgam + 1));
   double cart = cartD;
   double result = 0.;
   int r = 0;
@@ -201,7 +199,8 @@ double pcoga2dim_recur(double x, double shape1, double shape2,
     result += cart;
     if (cart == 0) break;
     cartB *= sun * (shape2 + r) / (r + 1);
-    cartD -= moon * exp(r * log(x / beta1)) / exp(R::lgammafn(r + lgam + 1));
+    cartD -= moon * cartE;
+    cartE *= x / (beta1 * (r + lgam + 1));
     cart = cartB * cartD;
     r++;
   }

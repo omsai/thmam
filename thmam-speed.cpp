@@ -119,7 +119,7 @@ double new_p00(double s, double t,
 }
 
 // [[Rcpp::export]]
-NumericVector new_vp00(NumericVector vs, double t,
+NumericVector old_vp00(NumericVector vs, double t,
 		       double lambda0, double lambda1, double lambda2,
 		       double p) {
   int n = vs.size();
@@ -187,7 +187,7 @@ double new_p01(double s, double t,
 }
 
 // [[Rcpp::export]]
-NumericVector new_vp01(NumericVector vs, double t,
+NumericVector old_vp01(NumericVector vs, double t,
 		       double lambda0, double lambda1, double lambda2,
 		       double p) {
   int n = vs.size();
