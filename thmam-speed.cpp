@@ -1,11 +1,16 @@
+// [[Rcpp::depends(RcppGSL)]]
+
 #include <Rcpp.h>
-#include <coga.h>
+#include <RcppGSL.h>
+#include <gsl/gsl_sf_hyperg.h>
+#include <R_ext/Applic.h>
 
 using namespace Rcpp;
 
+// rename dcoga2dim_hyper as dcoga2dim in this file
 // [[Rcpp::export]]
 double dcoga2dim(double x, double shape1, double shape2,
-		 double rate1, double rate2) {
+		       double rate1, double rate2) {
   // transfer rate to scale
   double beta1 = 1 / rate1;
   double beta2 = 1 / rate2;
@@ -23,26 +28,15 @@ double dcoga2dim(double x, double shape1, double shape2,
   }
 
   double lgam = shape1 + shape2;
-  double cart = 0;
-  double result = 0;
-  int r = 0;
-  
-  while (TRUE) {
-    cart = R::choose(shape2 + r - 1, r) / exp(R::lgammafn(lgam + r));
-    cart *= pow(x * (1/beta1 - 1/beta2), r);
-    if (cart == R_PosInf || R_IsNaN(cart)) {
-      warning("Inf or NaN happened, not converge!");
-      break;
-    }
-    result += cart;
-    if (cart == 0) break;
-    r++;
-  }
-  result *= pow(x, lgam - 1) * exp(-x / beta1);
+  double parx = (1/beta1 - 1/beta2) * x;
+  double result = pow(x, lgam - 1) * exp(-x / beta1);
+  result *= gsl_sf_hyperg_1F1(shape2, lgam, parx);
   result /= pow(beta1, shape1) * pow(beta2, shape2);
+  result /= exp(R::lgammafn(lgam));
   return result;
 }
 
+// rename pcoga2dim_recur_nopgamma as pcoga2dim in this file
 // [[Rcpp::export]]
 double pcoga2dim(double x, double shape1, double shape2,
 		 double rate1, double rate2) {
@@ -65,20 +59,25 @@ double pcoga2dim(double x, double shape1, double shape2,
   }
 
   double lgam = shape1 + shape2;
-  double cart = 0;
-  double result = 0;
+  double sun = 1 - beta1 / beta2;
+  
+  double cartB = 1.;
+  double cartD = R::pgamma(x/beta1, lgam, 1, 1, 0);
+  double cart = cartD;
+  double result = 0.;
   int r = 0;
 
   while (TRUE) {
-    cart = R::choose(shape2 + r - 1, r) * pow(1 - beta1/beta2, r);
-    cart *= R::pgamma(x/beta1, lgam + r, 1, 1, 0);
     if (cart == R_PosInf || R_IsNaN(cart)) {
       warning("Inf or NaN happened, not converge!");
       break;
     }
     result += cart;
     if (cart == 0) break;
+    cartB *= sun * (shape2 + r) / (r + 1);
     r++;
+    cartD = R::pgamma(x/beta1, lgam + r, 1, 1, 0);
+    cart = cartB * cartD;
   }
   return result * pow(beta1/beta2, shape2);
 }
@@ -119,7 +118,7 @@ double new_p00(double s, double t,
 }
 
 // [[Rcpp::export]]
-NumericVector old_vp00(NumericVector vs, double t,
+NumericVector new_vp00(NumericVector vs, double t,
 		       double lambda0, double lambda1, double lambda2,
 		       double p) {
   int n = vs.size();
@@ -187,7 +186,7 @@ double new_p01(double s, double t,
 }
 
 // [[Rcpp::export]]
-NumericVector old_vp01(NumericVector vs, double t,
+NumericVector new_vp01(NumericVector vs, double t,
 		       double lambda0, double lambda1, double lambda2,
 		       double p) {
   int n = vs.size();
@@ -198,3 +197,129 @@ NumericVector old_vp01(NumericVector vs, double t,
   return result;
 }
 
+/************************************************************************************
+ ****************************** prepare for integrate  ******************************
+ ************************************************************************************/
+
+void new_f00(double *s, int n, void *ex) {
+  double *ptr = (double *) ex;
+  double t       = ptr[0];
+  double sigma   = ptr[1];
+  double lambda0 = ptr[2];
+  double lambda1 = ptr[3];
+  double lambda2 = ptr[4];
+  double p       = ptr[5];
+  int    dim     = (int) ptr[6];
+  double *x      = ptr + 7;
+  for (int i = 0; i < n; i++) {
+    double temp = new_p00(s[i], t, lambda0, lambda1, lambda2, p);
+    double sd = sigma * sqrt(s[i]);
+    for (int j = 0; j < dim; j++) temp *= R::dnorm(x[j], 0.0, sd, 0);
+    s[i] = temp;
+  }
+}
+
+void new_f01(double *s, int n, void *ex) {
+  double *ptr = (double *) ex;
+  double t       = ptr[0];
+  double sigma   = ptr[1];
+  double lambda0 = ptr[2];
+  double lambda1 = ptr[3];
+  double lambda2 = ptr[4];
+  double p       = ptr[5];
+  int    dim     = (int) ptr[6];
+  double *x      = ptr + 7;
+  for (int i = 0; i < n; i++) {
+    double temp = new_p01(s[i], t, lambda0, lambda1, lambda2, p);
+    double sd = sigma * sqrt(s[i]);
+    for (int j = 0; j < dim; j++) temp *= R::dnorm(x[j], 0.0, sd, 0);
+    s[i] = temp;
+  }
+}
+
+/*****************************************************************************
+ ****************************** integrate for h ******************************
+ *****************************************************************************/
+
+// [[Rcpp::export]]
+NumericVector new_h00(NumericMatrix x, NumericVector t, NumericVector theta,
+		  NumericVector integrControl) {
+  int dim = x.ncol(), n = x.nrow();
+  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+  double sigma = theta[3], p = theta[4];
+
+  /* set up for Rdqags */
+  double *ex = Calloc(7 + dim, double);
+  double a = 0., b; // = t;
+  // input
+  double epsabs = integrControl[0], epsrel = integrControl[1];
+  int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+  // output
+  double result, abserr; // integrate()$value and integrate()$abs.error
+  int last, ier;  // integrate()$subdivision and integrate()$message
+  int neval; // number of evaluation of integrand
+  // working arrays
+  int lenw = 4 * limit, *iwork = Calloc(limit, int);
+  double *work = Calloc(lenw,  double);
+  /* done setting for Rdqags */
+
+  ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+  ex[5] = p; ex[6] = (double) dim;
+  NumericVector value(n);
+  for (int i = 0; i < n; i++) {
+    // for atom
+    double sd = sigma * sqrt(t[i]);
+    double prod = exp(-lambda0 * t[i]);
+    for (int j = 0; j < dim; j++) {
+      ex[7 + j] = x(i, j);
+      prod *= R::dnorm(x(i, j), 0.0, sd, 0);
+    }
+    // do integrate
+    b = t[i]; ex[0] = t[i];
+    Rdqags(new_f00, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	   &limit, &lenw, &last, iwork, work);
+    value[i] = result + prod;
+  }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  return(value);
+}
+
+
+// [[Rcpp::export]]
+NumericVector new_h01(NumericMatrix x, NumericVector t, NumericVector theta,
+		  NumericVector integrControl) {
+  int dim = x.ncol(), n = x.nrow();
+  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+  double sigma = theta[3], p = theta[4];
+
+  /* set up for Rdqags */
+  double *ex = Calloc(7 + dim, double);
+  double a = 0., b; // = t;
+  // input
+  double epsabs = integrControl[0], epsrel = integrControl[1];
+  int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+  // output
+  double result, abserr; // integrate()$value and integrate()$abs.error
+  int last, ier;  // integrate()$subdivision and integrate()$message
+  int neval; // number of evaluation of integrand
+  // working arrays
+  int lenw = 4 * limit, *iwork = Calloc(limit, int);
+  double *work = Calloc(lenw,  double);
+  /* done setting for Rdqags */
+
+  ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+  ex[5] = p; ex[6] = (double) dim;
+  NumericVector value(n);
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+    // do integrate
+    b = t[i]; ex[0] = t[i];
+    Rdqags(new_f01, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	   &limit, &lenw, &last, iwork, work);
+    value[i] = result;
+  }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  return(value);
+}
