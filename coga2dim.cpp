@@ -97,6 +97,7 @@ double dcoga2dim_hyper(double x, double shape1, double shape2,
   // handle one shape is 0
   if (shape1 == 0) return R::dgamma(x, shape2, beta2, 0);
   if (shape2 == 0) return R::dgamma(x, shape1, beta1, 0);
+  /*
   // determine min beta
   if (beta1 > beta2) {
     double beta_cart = beta1;
@@ -106,7 +107,7 @@ double dcoga2dim_hyper(double x, double shape1, double shape2,
     shape1 = shape2;
     shape2 = shape_cart;
   }
-
+  */
   double lgam = shape1 + shape2;
   double parx = (1/beta1 - 1/beta2) * x;
   double result = pow(x, lgam - 1) * exp(-x / beta1);
@@ -231,7 +232,7 @@ double pcoga2dim_recur_nopgamma(double x, double shape1, double shape2,
   if (shape1 == 0) return R::pgamma(x, shape2, beta2, 1, 0);
   if (shape2 == 0) return R::pgamma(x, shape1, beta1, 1, 0);
   // make convergence faster
-
+  /*
   // determine min beta
   if (beta1 > beta2) {
     double beta_cart = beta1;
@@ -241,7 +242,7 @@ double pcoga2dim_recur_nopgamma(double x, double shape1, double shape2,
     shape1 = shape2;
     shape2 = shape_cart;
   }
-
+  */
   double lgam = shape1 + shape2;
   double sun = 1 - beta1 / beta2;
   
@@ -264,4 +265,18 @@ double pcoga2dim_recur_nopgamma(double x, double shape1, double shape2,
     cart = cartB * cartD;
   }
   return result * pow(beta1/beta2, shape2);
+}
+
+
+// [[Rcpp::export]]
+double pcoga2dim_diff_shape (double x,
+			     double shape1, double shape2,
+			     double rate1, double rate2) {
+  double result = pow(rate1, shape1) * pow(rate2, shape2);
+  double lgam = shape1 + shape2;
+  result *= pow(x, lgam);
+  result /= exp(R::lgammafn(lgam + 1));
+  result *= exp(-x * rate1);
+  result *= gsl_sf_hyperg_1F1(shape2, lgam + 1, x * (rate1 - rate2));
+  return result;
 }
