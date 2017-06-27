@@ -94,10 +94,11 @@ double dcoga2dim_hyper(double x, double shape1, double shape2,
   // transfer rate to scale
   double beta1 = 1 / rate1;
   double beta2 = 1 / rate2;
+  /*
   // handle one shape is 0
   if (shape1 == 0) return R::dgamma(x, shape2, beta2, 0);
   if (shape2 == 0) return R::dgamma(x, shape1, beta1, 0);
-  /*
+  
   // determine min beta
   if (beta1 > beta2) {
     double beta_cart = beta1;

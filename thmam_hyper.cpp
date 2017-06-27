@@ -15,10 +15,13 @@ double dcoga2dim(double x, double shape1, double shape2,
   // transfer rate to scale
   double beta1 = 1 / rate1;
   double beta2 = 1 / rate2;
+  
+  /*
   // handle one shape is 0
   if (shape1 == 0) return R::dgamma(x, shape2, beta2, 0);
   if (shape2 == 0) return R::dgamma(x, shape1, beta1, 0);
-
+  */
+  
   gsl_set_error_handler_off();
   double lgam = shape1 + shape2;
   double parx = (1/beta1 - 1/beta2) * x;
@@ -27,40 +30,6 @@ double dcoga2dim(double x, double shape1, double shape2,
   result /= pow(beta1, shape1) * pow(beta2, shape2);
   result /= exp(R::lgammafn(lgam));
   return result;
-}
-
-// [[Rcpp::export]]
-double pcoga2dim(double x, double shape1, double shape2,
-		 double rate1, double rate2) {
-  // transfer rate to scale
-  double beta1 = 1 / rate1;
-  double beta2 = 1 / rate2;
-  // handle one shape is 0
-  if (shape1 == 0) return R::pgamma(x, shape2, beta2, 1, 0);
-  if (shape2 == 0) return R::pgamma(x, shape1, beta1, 1, 0);
-
-  double lgam = shape1 + shape2;
-  double sun = 1 - beta1 / beta2;
-  
-  double cartB = 1.;
-  double cartD = R::pgamma(x/beta1, lgam, 1, 1, 0);
-  double cart = cartD;
-  double result = 0.;
-  int r = 0;
-
-  while (TRUE) {
-    if (cart == R_PosInf || R_IsNaN(cart)) {
-      warning("Inf or NaN happened, not converge!");
-      break;
-    }
-    result += cart;
-    if (cart == 0) break;
-    cartB *= sun * (shape2 + r) / (r + 1);
-    r++;
-    cartD = R::pgamma(x/beta1, lgam + r, 1, 1, 0);
-    cart = cartB * cartD;
-  }
-  return result * pow(beta1/beta2, shape2);
 }
 
 
