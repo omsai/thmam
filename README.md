@@ -1,23 +1,15 @@
 # README #
 
-### likelihood.cpp ###
+### Files Description ###
 
-* C++ funcitons for calculating p inside.
+* `coga2dim.cpp` : Calculate coga2dim.
 
-* C++ fucntions for calculating h inside.
+* `fitMovResHun.R` : estimation for thmam.
 
-### How can I compile them? ###
+* `rMovResHun.R` : Generate random data for thmam.
 
-* Install R package `coga` by the following code.
+* `likelihood.cpp` : Old version of likelihood.
 
-```
-install.packages("devtools")
+* `simulths.R` : Simulation work for estimation.
 
-devtools::install_github("ChaoranHu/coga")
-```
-
-Note: Do not install R package `coga` by `install.packages("coga")` from CRAN. Github carry the newest version, which has the head file for `dcoga` and `pcoga`.
-
-* Add head files.
-
-* Compile it and use!
+* `thmam_hyper.cpp` : Current version of likelihood.
