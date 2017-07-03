@@ -94,11 +94,10 @@ double ths_p00(double s, double t,
       break;
     }
     result += cart;
-    if (cart == 0 && cartlast > cart) break;
+    if (cart == 0 && cartlast >= cart && n > 1) break;
     cartlast = cart;
     n++;
   }
-
   return result;
 }
 
@@ -146,7 +145,7 @@ double ths_p01(double s, double t,
       break;
     }
     result += cart;
-    if (cart == 0 && cartlast > cart) break;
+    if (cart == 0 && cartlast >= cart && n > 1) break;
     cartlast = cart;
     n++;
   }
@@ -211,7 +210,7 @@ double ths_p10(double s, double t,
       break;
     }
     result += cart;
-    if (cart == 0 && cartlast > cart) break;
+    if (cart == 0 && cartlast >= cart && n > 1) break;
     cartlast = cart;
     n++;
   }
@@ -263,7 +262,7 @@ double ths_p11(double s, double t,
       break;
     }
     result += cart;
-    if (cart == 0 && cartlast > cart) break;
+    if (cart == 0 && cartlast >= cart && n > 1) break;
     cartlast = cart;
     n++;
   }
@@ -315,7 +314,7 @@ double ths_p12(double s, double t,
       break;
     }
     result += cart;
-    if (cart == 0 && cartlast > cart) break;
+    if (cart == 0 && cartlast >= cart && n > 1) break;
     cartlast = cart;
     n++;
   }
@@ -909,10 +908,10 @@ NumericVector ths_h22(NumericMatrix x, NumericVector t, NumericVector theta,
 /******************************************************************************
  ********** negative log likelihood function via forward algorithm ************
  ******************************************************************************/
-
+// original version, follow smam
 // [[Rcpp::export]]
-double nllk_fwd_ths(NumericVector &theta, NumericMatrix &data,
-	       NumericVector &integrControl) {
+double nllk_fwd_ths_origin(NumericVector &theta, NumericMatrix &data,
+	            NumericVector &integrControl) {
   // theta lambda0, lambda1, lambda2, sigma, p
   // data diff of t and x
   int n = data.nrow(); int dim = data.ncol() - 1;
@@ -952,6 +951,81 @@ double nllk_fwd_ths(NumericVector &theta, NumericMatrix &data,
     double sumf0 = alpha0 * hresult00[i] + alpha1 * hresult10[i] + alpha2 * hresult20[i];
     double sumf1 = alpha0 * hresult01[i] + alpha1 * hresult11[i] + alpha2 * hresult21[i];
     double sumf2 = alpha0 * hresult02[i] + alpha1 * hresult12[i] + alpha2 * hresult22[i];
+
+    double dx = sumf0 + sumf1 + sumf2;
+    alpha0 = sumf0 / dx;
+    alpha1 = sumf1 / dx;
+    alpha2 = sumf2 / dx;
+    llk += log(dx);
+  }
+  return(-llk);
+}
+
+// convert vector to matrix
+// [[Rcpp::export]]
+NumericMatrix con_v_m(NumericVector x) {
+  int nx = x.size();
+  NumericMatrix y(1, nx);
+  y(0, _ ) = x;
+  return y;
+}
+
+//convert double to vector
+// [[Rcpp::export]]
+NumericVector con_n_v(double x) {
+  NumericVector y(1, x);
+  return y;
+}
+
+// [[Rcpp::export]]
+double nllk_fwd_ths(NumericVector &theta, NumericMatrix &data,
+	              NumericVector &integrControl) {
+  // theta lambda0, lambda1, lambda2, sigma, p
+  // data diff of t and x
+  int n = data.nrow(); int dim = data.ncol() - 1;
+  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+  double ps0 = 1. / lambda0 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps1 = 1. / lambda1 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps2 = 1. / lambda2 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  NumericVector tt = data.column(0);
+  NumericMatrix x = data(Range(0, n - 1), Range(1, dim));
+  double hresult00, hresult01, hresult02;
+  double hresult10, hresult11, hresult12;
+  double hresult20, hresult21, hresult22;
+  double alpha0 = ps0, alpha1 = ps1, alpha2 = ps2;
+
+  // do forward algorithm
+  NumericMatrix crowm(1, dim);
+  NumericVector ttv(1);
+  double llk = 0.;
+  for (int i = 0; i < n; i++) {
+    NumericVector crow = x.row(i);
+    if (is_true(all(crow == 0.))) {
+      hresult00 = 0.;
+      hresult01 = 0.;
+      hresult02 = 0.;
+      hresult10 = 0.;
+      hresult11 = exp(-lambda1 * tt[i]);
+      hresult12 = 0.;
+      hresult20 = 0.;
+      hresult21 = 0.;
+      hresult22 = exp(-lambda2 * tt[i]);
+    } else {
+      crowm = con_v_m(crow);
+      ttv   = con_n_v(tt[i]);
+      hresult00 = ths_h00(crowm, ttv, theta, integrControl)[0],
+      hresult01 = ths_h01(crowm, ttv, theta, integrControl)[0],
+      hresult02 = ths_h02(crowm, ttv, theta, integrControl)[0],
+      hresult10 = ths_h10(crowm, ttv, theta, integrControl)[0],
+      hresult11 = ths_h11(crowm, ttv, theta, integrControl)[0],
+      hresult12 = ths_h12(crowm, ttv, theta, integrControl)[0],
+      hresult20 = ths_h20(crowm, ttv, theta, integrControl)[0],
+      hresult21 = ths_h21(crowm, ttv, theta, integrControl)[0],
+      hresult22 = ths_h22(crowm, ttv, theta, integrControl)[0];
+    }
+    double sumf0 = alpha0 * hresult00 + alpha1 * hresult10 + alpha2 * hresult20;
+    double sumf1 = alpha0 * hresult01 + alpha1 * hresult11 + alpha2 * hresult21;
+    double sumf2 = alpha0 * hresult02 + alpha1 * hresult12 + alpha2 * hresult22;
 
     double dx = sumf0 + sumf1 + sumf2;
     alpha0 = sumf0 / dx;

@@ -11,4 +11,4 @@ grid <- seq(0, 8, length.out = 10)
 
 data <- rMovResHun(grid, lam0, lam1, lam2, sigma, p, "m")
 
-fitMovResHun(data, c(lam0, lam1, lam2, sigma, p), optim.control=list(maxit = 2))
+fitMovResHun2(data, c(lam0, lam1, lam2, sigma, p))

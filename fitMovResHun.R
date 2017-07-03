@@ -1,40 +1,50 @@
 Rcpp::sourceCpp("/Users/ChaoranHu/Desktop/thmam/thmam_hyper.cpp")
 
-fitMovResHun <- function(data, start,
-                         method = "Nelder-Mead",
-                         optim.control = list(),
-                         integrControl = integr.control()) {
+fitMovResHun1 <- function(data, start,
+                          optim.control = list(),
+                          integrControl = integr.control()) {
     if (!is.matrix(data)) data <- as.matrix(data)
     dinc <- apply(data, 2, diff)
-    ## objfun <- switch(likelihood,
-    ##                  composite = ncllk_m1_inc,
-    ##                  full = nllk_inc,
-    ##                  stop("Not valid likelihood type.")
-    ##                  )
     integrControl <- unlist(integrControl)
-    fit <- optim(start, nllk_fwd_ths, data = dinc, method = method,
-                 control = optim.control, 
-                 integrControl = integrControl)
-    ## ## get variance estimate
-    ## varest <- matrix(NA_real_, 3, 3)
-    ## estimate <- fit$par
-    ## ## if (likelihood == "full") {
-    ##     ## always do this without log transformation
-    ##     hess <- tryCatch(numDeriv::hessian(
-    ##         nllk_fwd_ths, estimate, data = dinc,
-    ##         integrControl = integrControl, logtr = FALSE),
-    ##                      error = function(e) e)
-    ##     if (!is(hess, "error")) varest <- solve(hess)
-    ##     ## not -hess because objfun is negative llk already
-    ## ## }
+
+    foo <- function (p) {nllk_fwd_ths(c(4,.5,.1,1,p), dinc, integrControl)}
+    
+    fit <- optim(start, foo, method = "L-BFGS-B",
+                 lower = 0.5, upper = 0.9,
+                 control = optim.control)
     
     list(estimate    = fit$par,
-         #varest      = varest,
          loglik      = -fit$value,
          convergence = fit$convergence,
-         #likelihood  = likelihood
+         counts = fit$counts
          )
 }
+
+fitMovResHun2 <- function(data, start,
+                          optim.control = list(),
+                          integrControl = integr.control()) {
+    if (!is.matrix(data)) data <- as.matrix(data)
+    dinc <- apply(data, 2, diff)
+    integrControl <- unlist(integrControl)
+
+    fit <- BB::spg(par = start, fn = nllk_fwd_ths, data = dinc,
+                   integrControl = integrControl,
+                   lower = rep(0.0001, 5),
+                   upper = c(Inf, Inf, Inf, Inf, 0.9999),
+                   control = optim.control)
+
+    fit
+}
+
+
+
+
+
+
+
+
+
+
 
 integr.control <- function(rel.tol = .Machine$double.eps^.25,
                            abs.tol = rel.tol, subdivisions = 100L) {
@@ -46,3 +56,4 @@ integr.control <- function(rel.tol = .Machine$double.eps^.25,
         stop("maximum number of subintervals must be > 0")
     list(rel.tol = rel.tol, abs.tol = abs.tol, subdivisions = subdivisions)
 }
+
