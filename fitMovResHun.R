@@ -82,11 +82,30 @@ fitMovResHun5 <- function(data, start, lower, upper,
                           lb = lower,
                           ub = upper,
                           opts = list("algorithm"   = "NLOPT_LN_COBYLA",
-                                      "print_level" = 3))
+                                      "print_level" = 3,
+                                      "maxeval" = 0))
 
     fit
 }
 
+## use nlopt::bobyqa
+fitMovResHun6 <- function(data, start, lower, upper,
+                          integrControl = integr.control()) {
+    if (!is.matrix(data)) data <- as.matrix(data)
+    dinc <- apply(data, 2, diff)
+    integrControl <- unlist(integrControl)
+
+    fit <- nloptr::nloptr(x0 = start, eval_f = nllk_fwd_ths,
+                          data = dinc,
+                          integrControl = integrControl,
+                          lb = lower,
+                          ub = upper,
+                          opts = list("algorithm"   = "NLOPT_LN_BOBYQA",
+                                      "print_level" = 3,
+                                      "maxeval" = 0))
+
+    fit
+}
 
 
 
