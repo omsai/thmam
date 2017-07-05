@@ -5,10 +5,6 @@
 #include <gsl/gsl_sf_hyperg.h>
 #include <R_ext/Applic.h>
 
-// [[Rcpp::depends(RcppParallel)]]
-#include <RcppParallel.h>
-using namespace RcppParallel;
-
 using namespace Rcpp;
 
 /***************** basic formula for coga *****************/
