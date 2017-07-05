@@ -1,4 +1,4 @@
-Rcpp::sourceCpp("/Users/ChaoranHu/Desktop/thmam/thmam_hyper.cpp")
+Rcpp::sourceCpp("thmam_hyper.cpp")
 
 ## use optim L-BFGS-B
 fitMovResHun1 <- function(data, start,
