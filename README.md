@@ -13,3 +13,7 @@
 * `simulths.R` : Simulation work for estimation.
 
 * `thmam_hyper.cpp` : Current version of likelihood.
+
+* `submit.slurm` : configure file for HPC.
+
+* `thama_likelihood.cpp` : likelihood file contains serial and parallel versions.
