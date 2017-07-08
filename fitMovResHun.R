@@ -7,67 +7,23 @@ fitMovResHun1 <- function(data, start,
     if (!is.matrix(data)) data <- as.matrix(data)
     dinc <- apply(data, 2, diff)
     integrControl <- unlist(integrControl)
+
+    objfun <- function(theta) {
+        if (theta[1] > 0 & theta[2] > 0 & theta[3] > 0 &
+            theta[4] > 0 & theta[5] > 0 & theta[5] < 1) {
+            return(nllk_fwd_ths(theta, dinc, integrControl))
+        } else {
+            return(NA)
+        }
+    }
     
-    fit <- optim(par = start, fn = nllk_fwd_ths, data = dinc,
-                 integrControl = integrControl,
-                 method = "L-BFGS-B",
-                 lower = rep(0.0001, 5),
-                 upper = c(Inf, Inf, Inf, Inf, 0.9999),
+    fit <- optim(par = start, fn = objfun,
+                 method = "Nelder-Mead",
                  control = optim.control)
 
     fit
 }
 
-## use BB::spg
-fitMovResHun2 <- function(data, start,
-                          optim.control = list(),
-                          integrControl = integr.control()) {
-    if (!is.matrix(data)) data <- as.matrix(data)
-    dinc <- apply(data, 2, diff)
-    integrControl <- unlist(integrControl)
-
-    fit <- BB::spg(par = start, fn = nllk_fwd_ths, data = dinc,
-                   integrControl = integrControl,
-                   lower = rep(0.0001, 5),
-                   upper = c(Inf, Inf, Inf, Inf, 0.9999),
-                   control = optim.control)
-
-    fit
-}
-
-## use minqa::bobyqa
-fitMovResHun3 <- function(data, start, lower, upper,
-                          optim.control = list(),
-                          integrControl = integr.control()) {
-    if (!is.matrix(data)) data <- as.matrix(data)
-    dinc <- apply(data, 2, diff)
-    integrControl <- unlist(integrControl)
-
-    fit <- minqa::bobyqa(par = start, fn = nllk_fwd_ths, data = dinc,
-                         integrControl = integrControl,
-                         lower = lower,
-                         upper = upper,
-                         control = optim.control)
-
-    fit
-}
-
-## use lbfgsb3::lbfgsb3
-fitMovResHun4 <- function(data, start,
-                          optim.control = list(),
-                          integrControl = integr.control()) {
-    if (!is.matrix(data)) data <- as.matrix(data)
-    dinc <- apply(data, 2, diff)
-    integrControl <- unlist(integrControl)
-
-    fit <- lbfgsb3::lbfgsb3(prm = start, fn = nllk_fwd_ths, data = dinc,
-                            integrControl = integrControl,
-                            lower = rep(0.0001, 5),
-                            upper = c(Inf, Inf, Inf, Inf, 0.9999),
-                            control = optim.control)
-
-    fit
-}
 
 ## use nlopt::cobyla
 fitMovResHun5 <- function(data, start, lower, upper,

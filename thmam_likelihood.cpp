@@ -1,11 +1,13 @@
-// [[Rcpp::depends(RcppGSL)]]
+// [[Rcpp::depends(RcppGSL, RcppParallel)]]
 
 #include <Rcpp.h>
 #include <RcppGSL.h>
 #include <gsl/gsl_sf_hyperg.h>
 #include <R_ext/Applic.h>
+#include <RcppParallel.h>
 
 using namespace Rcpp;
+using namespace RcppParallel;
 
 /***************** basic formula for coga *****************/
 
@@ -15,12 +17,6 @@ double dcoga2dim(double x, double shape1, double shape2,
   // transfer rate to scale
   double beta1 = 1 / rate1;
   double beta2 = 1 / rate2;
-  
-  /*
-  // handle one shape is 0
-  if (shape1 == 0) return R::dgamma(x, shape2, beta2, 0);
-  if (shape2 == 0) return R::dgamma(x, shape1, beta1, 0);
-  */
   
   gsl_set_error_handler_off();
   double lgam = shape1 + shape2;
@@ -37,19 +33,6 @@ double dcoga2dim(double x, double shape1, double shape2,
 double pcoga2dim_diff_shape (double x,
 			     double shape1, double shape2,
 			     double rate1, double rate2) {
-  /*
-  // handle special situations
-  if (shape1 == 0 && shape2 == 0) {
-    return 1 - pcoga2dim(x, 1, 0, rate1, rate2);
-  }
-  if (shape1 == 0 && shape2 != 0) {
-    return pcoga2dim(x, 0, shape2, rate1, rate2) - pcoga2dim(x, 1, shape2, rate1, rate2);
-  }
-  if (shape1 != 0 && shape2 == 0) {
-    return pcoga2dim(x, shape1, 0, rate1, rate2) - pcoga2dim(x, shape1 + 1, 0, rate1, rate2);
-  }
-  */
-  
   gsl_set_error_handler_off();
   double result = pow(rate1, shape1) * pow(rate2, shape2);
   double lgam = shape1 + shape2 + 1;
@@ -381,9 +364,9 @@ NumericVector ths_vp22(NumericVector vs, double t,
 }
 
 
-/************************************************************************************
- ****************************** prepare for integrate  ******************************
- ************************************************************************************/
+/****************************************************************************
+ ************************** prepare for integrate  **************************
+ ****************************************************************************/
 
 void ths_f00(double *s, int n, void *ex) {
   double *ptr = (double *) ex;
@@ -546,7 +529,6 @@ void ths_f22(double *s, int n, void *ex) {
     s[i] = temp;
   }
 }
-
 
 /*****************************************************************************
  ****************************** integrate for h ******************************
@@ -905,63 +887,688 @@ NumericVector ths_h22(NumericMatrix x, NumericVector t, NumericVector theta,
 }
 
 
+/*****************************************************************************
+ ****************************** integrate for h ******************************
+ ****************************** parallel version *****************************
+ *****************************************************************************/
+
+// parallel h00 **************************
+
+struct THS_h00_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h00_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      // for atom
+      double sd = sigma * sqrt(t[i]);
+      double prod = exp(-lambda0 * t[i]);
+      for (int j = 0; j < dim; j++) {
+        ex[7 + j] = x(i, j);
+        prod *= R::dnorm(x(i, j), 0.0, sd, 0);
+      }
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f00, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result + prod;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h00_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h00_p ths_h00_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h00_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h01 **************************
+
+struct THS_h01_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h01_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f01, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h01_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h01_p ths_h01_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h01_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h02 **************************
+
+struct THS_h02_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h02_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f02, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h02_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h02_p ths_h02_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h02_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h10 **************************
+
+struct THS_h10_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h10_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f10, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h10_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h10_p ths_h10_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h10_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h11 **************************
+
+struct THS_h11_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h11_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f11, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h11_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h11_p ths_h11_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h11_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h12 **************************
+
+struct THS_h12_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h12_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f12, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h12_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h12_p ths_h12_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h12_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h20 **************************
+
+struct THS_h20_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h20_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f20, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h20_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h20_p ths_h20_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h20_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h21 **************************
+
+struct THS_h21_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h21_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f21, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h21_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h21_p ths_h21_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h21_p, grainSize);
+
+  return value;
+  
+}
+
+// parallel h22 **************************
+
+struct THS_h22_p : public Worker {
+
+  // input
+  const RMatrix<double> x;
+  const RVector<double> t;
+  const RVector<double> theta;
+  const RVector<double> integrControl;
+
+  // output
+  RVector<double> value;
+
+  // initialize
+  THS_h22_p(const NumericMatrix x, const NumericVector t,
+	    const NumericVector theta, const NumericVector integrControl,
+	    NumericVector value)
+    : x(x), t(t), theta(theta), integrControl(integrControl), value(value) {}
+
+  // function call in specified range
+  void operator()(std::size_t begin, std::size_t end) {
+    // int dim = x.ncol(), n = x.nrow();
+    int dim = x.ncol();
+    double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+    double sigma = theta[3], p = theta[4];
+
+    /* set up for Rdqags */
+    double *ex = Calloc(7 + dim, double);
+    double a = 0., b; // = t;
+    // input
+    double epsabs = integrControl[0], epsrel = integrControl[1];
+    int limit = (int) integrControl[2]; // subdivision in argument of R integrate
+    // output
+    double result, abserr; // integrate()$value and integrate()$abs.error
+    int last, ier;  // integrate()$subdivision and integrate()$message
+    int neval; // number of evaluation of integrand
+    // working arrays
+    int lenw = 4 * limit, *iwork = Calloc(limit, int);
+    double *work = Calloc(lenw,  double);
+    /* done setting for Rdqags */
+
+    ex[1] = sigma; ex[2] = lambda0; ex[3] = lambda1; ex[4] = lambda2;
+    ex[5] = p; ex[6] = (double) dim;
+
+    for (std::size_t i = begin; i < end; i++) {
+      for (int j = 0; j < dim; j++) ex[7 + j] = x(i, j);
+      // do integrate
+      b = t[i]; ex[0] = t[i];
+      Rdqags(ths_f22, ex, &a, &b, &epsabs, &epsrel, &result, &abserr, &neval, &ier,
+	     &limit, &lenw, &last, iwork, work);
+      value[i] = result;
+    }
+  // free memory
+  Free(ex); Free(iwork); Free(work);
+  }
+};
+
+
+// [[Rcpp::export]]
+NumericVector ths_h22_paral(NumericMatrix x, NumericVector t, NumericVector theta,
+		            NumericVector integrControl, int grainSize) {
+  // allocate return vector
+  NumericVector value(x.nrow());
+
+  // creat the worker
+  THS_h22_p ths_h22_p(x, t, theta, integrControl, value);
+
+  // call parallelFor
+  parallelFor(0, x.nrow(), ths_h22_p, grainSize);
+
+  return value;
+  
+}
+
 
 /******************************************************************************
  ********** negative log likelihood function via forward algorithm ************
  ***************************** serial version *********************************
  ******************************************************************************/
-// original version, follow smam
-// [[Rcpp::export]]
-double nllk_fwd_ths_origin(NumericVector &theta, NumericMatrix &data,
-	            NumericVector &integrControl) {
-  // theta lambda0, lambda1, lambda2, sigma, p
-  // data diff of t and x
-  int n = data.nrow(); int dim = data.ncol() - 1;
-  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
-  double ps0 = 1. / lambda0 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
-  double ps1 = 1. / lambda1 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
-  double ps2 = 1. / lambda2 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
-  NumericVector tt = data.column(0);
-  NumericMatrix x = data(Range(0, n - 1), Range(1, dim));
-  NumericVector
-    hresult00 = ths_h00(x, tt, theta, integrControl),
-    hresult01 = ths_h01(x, tt, theta, integrControl),
-    hresult02 = ths_h02(x, tt, theta, integrControl),
-    hresult10 = ths_h10(x, tt, theta, integrControl),
-    hresult11 = ths_h11(x, tt, theta, integrControl),
-    hresult12 = ths_h12(x, tt, theta, integrControl),
-    hresult20 = ths_h20(x, tt, theta, integrControl),
-    hresult21 = ths_h21(x, tt, theta, integrControl),
-    hresult22 = ths_h22(x, tt, theta, integrControl);
-  double alpha0 = ps0, alpha1 = ps1, alpha2 = ps2;
-
-  // do forward algorithm
-  double llk = 0.;
-  for (int i = 0; i < n; i++) {
-    NumericVector crow = x.row(i);
-    if (is_true(all(crow == 0.))) {
-      hresult00[i] = 0.;
-      hresult01[i] = 0.;
-      hresult02[i] = 0.;
-      hresult10[i] = 0.;
-      hresult11[i] = exp(-lambda1 * tt[i]);
-      hresult12[i] = 0.;
-      hresult20[i] = 0.;
-      hresult21[i] = 0.;
-      hresult22[i] = exp(-lambda2 * tt[i]);
-    }
-    double sumf0 = alpha0 * hresult00[i] + alpha1 * hresult10[i] + alpha2 * hresult20[i];
-    double sumf1 = alpha0 * hresult01[i] + alpha1 * hresult11[i] + alpha2 * hresult21[i];
-    double sumf2 = alpha0 * hresult02[i] + alpha1 * hresult12[i] + alpha2 * hresult22[i];
-
-    double dx = sumf0 + sumf1 + sumf2;
-    alpha0 = sumf0 / dx;
-    alpha1 = sumf1 / dx;
-    alpha2 = sumf2 / dx;
-    llk += log(dx);
-  }
-  return(-llk);
-}
 
 // convert vector to matrix
 // [[Rcpp::export]]
@@ -1039,3 +1646,61 @@ double nllk_fwd_ths(NumericVector &theta, NumericMatrix &data,
 }
 
 
+
+/******************************************************************************
+ ********** negative log likelihood function via forward algorithm ************
+ *************************** parallel version *********************************
+ ******************************************************************************/
+
+// parallel version of likelihood
+// [[Rcpp::export]]
+double nllk_fwd_ths_parallel(NumericVector &theta, NumericMatrix &data,
+	                     NumericVector &integrControl, int grainSize) {
+  // theta lambda0, lambda1, lambda2, sigma, p
+  // data diff of t and x
+  int n = data.nrow(); int dim = data.ncol() - 1;
+  double lambda0 = theta[0], lambda1 = theta[1], lambda2 = theta[2];
+  double ps0 = 1. / lambda0 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps1 = 1. / lambda1 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  double ps2 = 1. / lambda2 / (1. / lambda0 + 1. / lambda1 + 1. / lambda2);
+  NumericVector tt = data.column(0);
+  NumericMatrix x = data(Range(0, n - 1), Range(1, dim));
+  NumericVector
+    hresult00 = ths_h00_paral(x, tt, theta, integrControl, grainSize),
+    hresult01 = ths_h01_paral(x, tt, theta, integrControl, grainSize),
+    hresult02 = ths_h02_paral(x, tt, theta, integrControl, grainSize),
+    hresult10 = ths_h10_paral(x, tt, theta, integrControl, grainSize),
+    hresult11 = ths_h11_paral(x, tt, theta, integrControl, grainSize),
+    hresult12 = ths_h12_paral(x, tt, theta, integrControl, grainSize),
+    hresult20 = ths_h20_paral(x, tt, theta, integrControl, grainSize),
+    hresult21 = ths_h21_paral(x, tt, theta, integrControl, grainSize),
+    hresult22 = ths_h22_paral(x, tt, theta, integrControl, grainSize);
+  double alpha0 = ps0, alpha1 = ps1, alpha2 = ps2;
+
+  // do forward algorithm
+  double llk = 0.;
+  for (int i = 0; i < n; i++) {
+    NumericVector crow = x.row(i);
+    if (is_true(all(crow == 0.))) {
+      hresult00[i] = 0.;
+      hresult01[i] = 0.;
+      hresult02[i] = 0.;
+      hresult10[i] = 0.;
+      hresult11[i] = exp(-lambda1 * tt[i]);
+      hresult12[i] = 0.;
+      hresult20[i] = 0.;
+      hresult21[i] = 0.;
+      hresult22[i] = exp(-lambda2 * tt[i]);
+    }
+    double sumf0 = alpha0 * hresult00[i] + alpha1 * hresult10[i] + alpha2 * hresult20[i];
+    double sumf1 = alpha0 * hresult01[i] + alpha1 * hresult11[i] + alpha2 * hresult21[i];
+    double sumf2 = alpha0 * hresult02[i] + alpha1 * hresult12[i] + alpha2 * hresult22[i];
+
+    double dx = sumf0 + sumf1 + sumf2;
+    alpha0 = sumf0 / dx;
+    alpha1 = sumf1 / dx;
+    alpha2 = sumf2 / dx;
+    llk += log(dx);
+  }
+  return(-llk);
+}
