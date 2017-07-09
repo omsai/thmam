@@ -1,8 +1,8 @@
 #! /bin/bash
-#SBATCH -n 100
+#SBATCH -n 10
 #SBATCH -p general
 #SBATCH --mail-user=chaoran.hu@uconn.edu
-#SBATCH --time=01-02:03:04
+#SBATCH --time=03-02:03:04
 
 export OMPI_MCA_mpi_warn_on_fork=0
 
