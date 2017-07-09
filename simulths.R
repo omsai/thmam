@@ -12,7 +12,7 @@ simul1 <-  function(){
     p <- .8
     sigma <- 25
 
-    grid <- seq(0, 20, length.out = 2)
+    grid <- seq(0, 2000, length.out = 101)
 
     data <- rMovResHun(grid, lam0, lam1, lam2, sigma, p, "m")
 

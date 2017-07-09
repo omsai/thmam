@@ -1,6 +1,6 @@
 #! /bin/bash
-#SBATCH -n 3
-#SBATCH -p debug
+#SBATCH -n 100
+#SBATCH -p general
 #SBATCH --mail-user=chaoran.hu@uconn.edu
 #SBATCH --time=01-02:03:04
 
